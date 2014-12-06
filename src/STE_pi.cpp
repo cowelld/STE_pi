@@ -57,7 +57,8 @@ long wstyle = wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER;
 
 int FileType = 0;
 double track_interval;
-int wind_int_sel;
+int track_int_sel;
+PlugIn_ViewPort *this_vp;
 
 wxTextFile   m_istream;
 STE_Point    NMEA_out_point;
@@ -68,14 +69,27 @@ WX_DEFINE_LIST(STE_PointList);
 STE_PointList *m_pSTE_PointList = NULL;
 PlugIn_Track *m_pTrack = NULL;
 
-double rws,rwd;
+
 double sum_rws, count_rws, sum_rwd, count_rwd;  // ALL Angular measurements are RADIANS
-double tws, twd;
 double sum_tws, count_tws, sum_twd, count_twd;
-double sog, cogt, cogm;
-double stw, hdg;
 double var;
 wxString UTS_time, UTS_date;
+
+struct wind{
+    double TWA;
+    double RWA;
+    double TWS;
+    double RWS;
+} Wind;
+
+
+struct boat{
+    double SOG;
+    double COG;
+    double STW;
+    double HDG;
+    double HDGM;
+} Boat;
 
 wxString          m_ifilename;
 wxString          m_ofilename;
@@ -128,6 +142,10 @@ int STE_pi::Init(void)
       m_pauimgr = GetFrameAuiManager();
       m_parent_window = GetOCPNCanvasWindow();
       m_pSTE_Control = NULL;
+
+      track_interval = 0.1;
+	  track_int_sel = 0;
+      var = compass_deg2rad(-14.0);      // TODO make this an input
 
       //    And load the configuration items
 //      LoadConfig();
@@ -356,36 +374,30 @@ void STE_pi::ShowPreferencesDialog(wxWindow* parent)
     
     pFileType->SetSelection(FileType);
 
-    wxString wind_int[] = {
+    wxString track_int[] = {
         _("500 feet (.1 mile)"),
-        _("50 feet (.01 mile)")
+        _("50 feet (.01 mile)"),
+        _("Automatic")
     };
 
-	track_interval = 0.01;
-	wind_int_sel = 1;
-    var = deg2rad(-14.0);      // TODO make this an input
-
-    pWindInterval = new wxRadioBox(dialog, ID_POINT_INTERVAL, _("Wind Barb Interval"),
+    pTrackInterval = new wxRadioBox(dialog, ID_POINT_INTERVAL, _("Track Minimum Interval"),
                                     wxDefaultPosition, wxDefaultSize,
-                                    2, wind_int, 1, wxRA_SPECIFY_COLS);
+                                    3, track_int, 1, wxRA_SPECIFY_COLS);
 
-    BoxSizerSTE->Add(pWindInterval, 0, wxALL | wxEXPAND, 2);
-	pWindInterval->SetSelection(wind_int_sel);
+    BoxSizerSTE->Add(pTrackInterval, 0, wxALL | wxEXPAND, 2);
+	pTrackInterval->SetSelection(track_int_sel);
 
     wxStdDialogButtonSizer* DialogButtonSizer = dialog->CreateStdDialogButtonSizer(wxOK|wxCANCEL);
     Display_Preferencs_panel->Add(DialogButtonSizer, 0, wxALIGN_RIGHT|wxALL, 5);
 	
 	dialog->Fit();
 
+//********************** Input Data selections by modal ********************
     if(dialog->ShowModal() == wxID_OK)  // Use this instead of Event driven routines.
       {
 		FileType = pFileType->GetSelection();
 
-		wind_int_sel = pWindInterval->GetSelection();
-		if (wind_int_sel == 1) {
-			 track_interval = 0.01;
-		}
-		else track_interval = 0.1;
+		track_int_sel = pTrackInterval->GetSelection();
 	}
 //            SaveConfig();
 }
@@ -485,19 +497,19 @@ bool STE_pi::make_trt_line(wxString sentence)   // test and fill in true wind da
     wxString m_string;
     if(NMEA_parse(sentence))
     {
-        if (cogt < 0 && cogm >= 0.0)                        // cogt not given but cogm is
+        if (Boat.COG < 0 && Boat.HDGM >= 0.0)                        // Boat.COG not given but Boat.HDGM is
         {
-                cogt = cogm + var ;
-                NMEA_out_point.COGT = m_string.Format(_T("%3.1f"), cogt);
+                Boat.COG = Boat.HDGM + var ;
+                NMEA_out_point.COGT = m_string.Format(_T("%3.1f"), Boat.COG);
         }
 
-        if (sog > 2.0 && cogt >= 0.0){        
-            if (rwd >= 0.0 && rws > 2.0)
+        if (Boat.SOG > 2.0 && Boat.COG >= 0.0){        
+            if (Wind.RWA >= 0.0 && Wind.RWS > 2.0)
             {
-                tws = VTW(rws,rwd,sog);
-                twd = BTW(rws,rwd,sog) + cogt;
-                NMEA_out_point.TrueWind = m_string.Format(_T("%5.3f"), twd);
-                NMEA_out_point.TWSpd = m_string.Format(_T("%3.1f"), tws);
+                Wind.TWS = VTW(Wind.RWS,Wind.RWA,Boat.SOG);
+                Wind.TWA = BTW(Wind.RWS,Wind.RWA,Boat.SOG) + Boat.COG;
+                NMEA_out_point.TrueWind = m_string.Format(_T("%5.3f"), Wind.TWA);
+                NMEA_out_point.TWSpd = m_string.Format(_T("%3.1f"), Wind.TWS);
             }            
         }
 
@@ -557,7 +569,7 @@ bool STE_pi::NMEA_parse( wxString sentence)
         {
             if( !wxIsNaN( m_NMEA0183.Hdg.MagneticVariationDegrees ) )
             {
-                var = deg2rad( m_NMEA0183.Hdg.MagneticVariationDegrees);
+                var = compass_deg2rad( m_NMEA0183.Hdg.MagneticVariationDegrees);
                 if( m_NMEA0183.Hdg.MagneticVariationDirection == West )
                     var = - var;
             }
@@ -565,9 +577,9 @@ bool STE_pi::NMEA_parse( wxString sentence)
 
             if( !wxIsNaN( m_NMEA0183.Hdg.MagneticSensorHeadingDegrees ) )
             {
-                hdg = deg2rad(m_NMEA0183.Hdg.MagneticSensorHeadingDegrees)+ var;
-                if (hdg > 2*PI) hdg = hdg - 2*PI;
-                NMEA_out_point.BtHDG = m_string.Format(_T("%5.3f"), hdg);
+                Boat.HDG = compass_deg2rad(m_NMEA0183.Hdg.MagneticSensorHeadingDegrees)+ var;
+                if (Boat.HDG > 2*PI) Boat.HDG = Boat.HDG - 2*PI;
+                NMEA_out_point.BtHDG = m_string.Format(_T("%5.3f"), Boat.HDG);
             }
             string_parsed = true;
         }
@@ -576,8 +588,8 @@ bool STE_pi::NMEA_parse( wxString sentence)
         {
             if( !wxIsNaN( m_NMEA0183.Hdm.DegreesMagnetic) )
             {
-                hdg = deg2rad(m_NMEA0183.Hdm.DegreesMagnetic) + var;               
-                NMEA_out_point.BtHDG = m_string.Format(_T("%5.3f"), hdg);
+                Boat.HDG = compass_deg2rad(m_NMEA0183.Hdm.DegreesMagnetic) + var;               
+                NMEA_out_point.BtHDG = m_string.Format(_T("%5.3f"), Boat.HDG);
             }
             string_parsed = true;
         }
@@ -586,8 +598,8 @@ bool STE_pi::NMEA_parse( wxString sentence)
         {
             if( !wxIsNaN( m_NMEA0183.Hdt.DegreesTrue) )
             {
-                hdg = deg2rad(m_NMEA0183.Hdt.DegreesTrue);
-                NMEA_out_point.BtHDG = m_string.Format(_T("%5.3f"), hdg);
+                Boat.HDG = compass_deg2rad(m_NMEA0183.Hdt.DegreesTrue);
+                NMEA_out_point.BtHDG = m_string.Format(_T("%5.3f"), Boat.HDG);
             }
         }
 
@@ -608,7 +620,7 @@ bool STE_pi::NMEA_parse( wxString sentence)
         {
             double wind_speed, wind_angle_rad;
             wind_speed = m_NMEA0183.Mwv.WindSpeed;
-            wind_angle_rad = deg2rad(m_NMEA0183.Mwv.WindAngle);
+            wind_angle_rad = compass_deg2rad(m_NMEA0183.Mwv.WindAngle);
 
             if(  wind_speed < 100. )
             {               
@@ -627,10 +639,10 @@ bool STE_pi::NMEA_parse( wxString sentence)
                     count_rwd += 1;
                     sum_rws += wind_speed;
                     count_rws += 1;
-                    rwd = sum_rwd/count_rwd;
-                    rws = sum_rws/count_rws;
-                    NMEA_out_point.RelWind = m_string.Format(_T("%5.3f"), rwd);
-                    NMEA_out_point.RWSpd = m_string.Format(_T("%3.1f"), rws);
+                    Wind.RWA = sum_rwd/count_rwd;
+                    Wind.RWS = sum_rws/count_rws;
+                    NMEA_out_point.RelWind = m_string.Format(_T("%5.3f"), Wind.RWA);
+                    NMEA_out_point.RWSpd = m_string.Format(_T("%3.1f"), Wind.RWS);
                 }
                 else
                 {
@@ -638,10 +650,10 @@ bool STE_pi::NMEA_parse( wxString sentence)
                     count_twd += 1;
                     sum_tws += wind_speed;
                     count_tws += 1;
-                    twd = sum_twd/count_twd;
-                    tws = sum_tws/count_tws;
-                    NMEA_out_point.TrueWind = m_string.Format(_T("%5.3f"), twd);
-                    NMEA_out_point.TWSpd = m_string.Format(_T("%3.1f"), tws);
+                    Wind.TWA = sum_twd/count_twd;
+                    Wind.TWS = sum_tws/count_tws;
+                    NMEA_out_point.TrueWind = m_string.Format(_T("%5.3f"), Wind.TWA);
+                    NMEA_out_point.TWSpd = m_string.Format(_T("%3.1f"), Wind.TWS);
                 }
             }
             string_parsed = true;
@@ -676,19 +688,19 @@ bool STE_pi::NMEA_parse( wxString sentence)
 
                     if( m_NMEA0183.Rmc.SpeedOverGroundKnots > .2 )
                     {
-                        sog = m_NMEA0183.Rmc.SpeedOverGroundKnots;
-                        NMEA_out_point.SOG = m_string.Format(_T("%3.1f"), sog);
+                        Boat.SOG = m_NMEA0183.Rmc.SpeedOverGroundKnots;
+                        NMEA_out_point.SOG = m_string.Format(_T("%3.1f"), Boat.SOG);
                     }
 
                     if( m_NMEA0183.Rmc.TrackMadeGoodDegreesTrue < 360. )
                     {
-                        cogt = deg2rad(m_NMEA0183.Rmc.TrackMadeGoodDegreesTrue);
-                        NMEA_out_point.COGT = m_string.Format(_T("%5.4f"), cogt);
+                        Boat.COG = compass_deg2rad(m_NMEA0183.Rmc.TrackMadeGoodDegreesTrue);
+                        NMEA_out_point.COGT = m_string.Format(_T("%5.4f"), Boat.COG);
                     }
                    
                     if( !wxIsNaN(m_NMEA0183.Rmc.MagneticVariation) )
                     {                                            
-                        var = deg2rad(m_NMEA0183.Rmc.MagneticVariation);
+                        var = compass_deg2rad(m_NMEA0183.Rmc.MagneticVariation);
                         if( m_NMEA0183.Rmc.MagneticVariationDirection == West )
                             var = - var;
                     }
@@ -731,25 +743,25 @@ void STE_pi::clear_variables()
 {
 	sum_rws = 0.0;
     count_rws = 0.0;
-    rws = 0.0;
+    Wind.RWS = 0.0;
 
 	sum_rwd = 0.0;          // ALL Angular measurements are RADIANS
     count_rwd = 0.0;
-    rwd = -1;
+    Wind.RWA = -1;
 
 	sum_tws = 0.0;
     count_tws = 0.0;
-    tws = 0.0;
+    Wind.TWS = 0.0;
 
 	sum_twd = 0.0;
     count_twd = 0.0;
-    twd = -1;
+    Wind.TWA = -1;
  
-	sog = 0.0;
-    cogt = -1;
-    cogm = -1;
-	stw = 0.0;
-	hdg = -1;               // don't clear var
+	Boat.SOG = 0.0;
+    Boat.COG = -1;
+    Boat.HDGM = -1;
+	Boat.STW = 0.0;
+	Boat.HDG = -1;               // don't clear var
 
     UTS_date.Clear();
     UTS_time.Clear();
@@ -884,21 +896,33 @@ STE_Point* STE_pi::Get_Record_Data(wxString* m_instr, STE_Point* m_Point)
 void STE_pi::Load_track()
 {
     wxString m_STE_str;
-    STE_Point *m_current_STE_Point;
+    STE_Point *m_current_STE_Point, *m_start_STE_Point;
     double m_leg_dist, prev_lat = 0, prev_lon = 0;
-
+    
     // Track title line build
     m_STE_str = m_istream.GetLine(1);
-    m_current_STE_Point = new STE_Point;
-    Get_Record_Data(&m_STE_str,  m_current_STE_Point);
-    m_pTrack->m_NameString = _T("STE_Track " + m_current_STE_Point->UTS);
-    m_pTrack->m_GUID = _T("STE_Track "+ m_current_STE_Point->UTS);
-
+    m_start_STE_Point = new STE_Point;
+    
     // Set up initial display position
     m_STE_str = m_istream.GetLine(start_record);
-    Get_Record_Data(&m_STE_str, m_current_STE_Point);
-    prev_lat = m_current_STE_Point->GetLat();
-    prev_lon = m_current_STE_Point->GetLon();
+    Get_Record_Data(&m_STE_str, m_start_STE_Point); // Set GUID data for Track
+
+    prev_lat = m_start_STE_Point->GetLat();
+    prev_lon = m_start_STE_Point->GetLon();
+
+    switch(track_int_sel)
+	{
+		case 0:
+            track_interval = 0.1;
+            break;
+        case 1:
+            track_interval = 0.01;
+            break;
+        case 2:
+            double max_screen_distance = local_distance(this_vp->lat_min, this_vp->lon_min, this_vp->lat_max, this_vp->lon_max);
+            track_interval = max_screen_distance / 100;
+            break;
+	}
 
     if (!m_pSTE_PointList->empty())
     {
@@ -916,12 +940,14 @@ void STE_pi::Load_track()
         m_STE_str = m_istream.GetLine(STE_record);
         m_current_STE_Point = new STE_Point;
         Get_Record_Data(&m_STE_str, m_current_STE_Point);
+        double m_lat = m_current_STE_Point->GetLat();
+        double m_lon = m_current_STE_Point->GetLon();
 
-        m_leg_dist = local_distance( m_current_STE_Point->GetLat(), m_current_STE_Point->GetLon(), prev_lat, prev_lon );
+        m_leg_dist = local_distance( prev_lat, prev_lon, m_lat, m_lon);
         if (m_leg_dist > track_interval)
         {            
-            prev_lat = m_current_STE_Point->GetLat();
-            prev_lon = m_current_STE_Point->GetLon();
+            prev_lat = m_lat;
+            prev_lon = m_lon;
 
             m_pSTE_PointList->Append(m_current_STE_Point);
 
@@ -931,6 +957,8 @@ void STE_pi::Load_track()
 
     if (!UpdatePlugInTrack(m_pTrack)) // Add to Route manager as non-permanent
     {
+        m_pTrack->m_NameString = _T("STE_Track " + m_start_STE_Point->UTS);
+        m_pTrack->m_GUID = _T("STE_Track "+ m_start_STE_Point->UTS);
         AddPlugInTrack( m_pTrack, false );
     } 
 	start_end_change = false;
@@ -971,6 +999,8 @@ bool STE_pi::RenderOverlay(wxDC &dc, PlugIn_ViewPort *vp)
 bool STE_pi::RenderGLOverlay(wxGLContext *pcontext, PlugIn_ViewPort *vp)
 {
    shown_dc_message = 0;
+   double wind_point_lat = 0, wind_point_lon = 0;
+   this_vp = vp;
 
    if(m_pSTE_PointList)
       {
@@ -984,14 +1014,13 @@ bool STE_pi::RenderGLOverlay(wxGLContext *pcontext, PlugIn_ViewPort *vp)
               glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
               glPushMatrix();
 
-              if (!m_pSTE_PointList->empty())
-              {
-                  STE_PointList::iterator iter;
-                  wxPoint pp;
-                  for (iter = m_pSTE_PointList->begin(); iter != m_pSTE_PointList->end(); ++iter)
-                     {
+                STE_PointList::iterator iter;
+                wxPoint pp;
+                for (iter = m_pSTE_PointList->begin(); iter != m_pSTE_PointList->end(); ++iter)
+                    {
                         STE_Point *wind_point = *iter;
-                        double m_TrueWind , m_TWSpd ;            // RADIAN values
+                        double m_TrueWind , m_TWSpd;   // RADIAN values
+                       
                         wind_point->TrueWind.ToDouble(&m_TrueWind);
                         if (m_TrueWind >= 0)
                         {
@@ -1002,8 +1031,7 @@ bool STE_pi::RenderGLOverlay(wxGLContext *pcontext, PlugIn_ViewPort *vp)
                                 Draw_Wind_Barb(pp, m_TrueWind, m_TWSpd);     
                             }
                         }
-                     }
-              }
+                    }
               glPopMatrix();
               glPopAttrib();
               RequestRefresh(m_parent_window);
@@ -1068,8 +1096,6 @@ void STE_pi::Draw_Wind_Barb(wxPoint pp, double rad, double speed)
         glVertex2d(barb_2_x + barb_legnth_2_x, barb_2_y + barb_legnth_2_y);
       glEnd();
 }
-
-
 
 //----------------------------------------------------------------
 //
@@ -1261,35 +1287,34 @@ STE_Analysis::~STE_Analysis(void)
 //************************************************************
 // Math equations
 */
-double deg2rad(double deg)
+static double compass_deg2rad(double deg)
 {
-    deg = int (360 + deg) % 360;
-    return (deg * PI / 180.0);
+    return ((90 - deg * PI / 180.0));
 }
 
-double rad2deg(double rad)
+static double compass_rad2deg(double rad)
 {
-    double deg = 360 + int(rad * 180.0 / PI) % 360;
-    return deg;
+    return (int(rad * 180.0 / PI + 90 + 360) % 360);
 }
+
 
 double local_distance (double lat1, double lon1, double lat2, double lon2) {
 	// Spherical Law of Cosines
 	double theta, dist; 
 
 	theta = lon2 - lon1; 
-	dist = sin(deg2rad(lat1)) * sin(deg2rad(lat2)) + cos(deg2rad(lat1)) * cos(deg2rad(lat2)) * cos(deg2rad(theta)); 
+	dist = sin(lat1 * PI/180) * sin(lat2 * PI/180) + cos(lat1 * PI/180) * cos(lat2* PI/180) * cos(theta* PI/180); 
 	dist = acos(dist);		// radians
-	dist = rad2deg(dist); 
+	dist = dist * 180 /PI; 
     dist = fabs(dist) * 60    ;    // nautical miles/degree
 	return (dist); 
 }
 
 double local_bearing (double lat1, double lon1, double lat2, double lon2) //FES
 {
-double angle = atan2 ( deg2rad(lat2-lat1), (deg2rad(lon2-lon1) * cos(deg2rad(lat1))));
+double angle = atan2( (lat2-lat1)*PI/180, ((lon2-lon1)* PI/180 * cos(lat1 *PI/180)));
 
-    angle = rad2deg(angle) ;
+    angle = angle * 180/PI ;
     angle = 90.0 - angle;
     if (angle < 0) angle = 360 + angle;
 	return (angle);
@@ -1302,19 +1327,6 @@ double VTW(double VAW, double BAW, double SOG){
 
 double BTW(double VAW, double BAW, double SOG){
     double BTW_value = atan((VAW * sin(BAW))/(VAW * cos(BAW)-SOG));
-    if (BAW < 3.1416){
-        if (BTW_value < 0){
-            BTW_value = 3.1416 + BTW_value;
-        }
-    }
-    if (BAW > 3.1416){
-        if (BTW_value > 0){
-            BTW_value = 3.1416 + BTW_value;
-        }
-        if (BTW_value < 0){
-            BTW_value = 3.1416 * 2 + BTW_value;
-        }
-    }
     return BTW_value;
 }
 
@@ -1325,18 +1337,5 @@ double VAW(double VTW, double BTW, double SOG){
 
 double BAW(double VTW, double BTW,double SOG){
     double BAW_value = atan((VTW * sin(BTW))/(VTW * cos(BTW)+ SOG));
-    if (BTW < 3.1416){
-        if (BAW_value < 0){
-            BAW_value = 3.1416 + BAW_value;
-        }
-    }
-    if (BTW > 3.1416){
-        if (BAW_value > 0){
-            BAW_value = 3.1416 + BAW_value;
-        }
-        if (BAW_value < 0){
-            BAW_value = 3.1416 * 2 + BAW_value;
-        }
-    }
     return BAW_value;
 }

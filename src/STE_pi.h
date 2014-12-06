@@ -124,7 +124,7 @@ private:
       wxWindow          *m_parent_window;
       NMEA0183          m_NMEA0183;
       wxRadioBox        *pFileType;
-      wxRadioBox        *pWindInterval;
+      wxRadioBox        *pTrackInterval;
       
 };
 
@@ -141,15 +141,15 @@ public:
       wxStaticText      *End_text;
       wxSlider          *m_end_slider;
 
-          wxBoxSizer        *bSizerName;
-          wxStaticText      *m_stName;
-          wxTextCtrl        *m_tName;
+        wxBoxSizer        *bSizerName;
+        wxStaticText      *m_stName;
+        wxTextCtrl        *m_tName;
 
-              wxBoxSizer        *bSizerFromTo;
-              wxStaticText      *m_stFrom;
-              wxTextCtrl        *m_tFrom;
-              wxStaticText      *m_stTo;
-              wxTextCtrl        *m_tTo;
+        wxBoxSizer        *bSizerFromTo;
+        wxStaticText      *m_stFrom;
+        wxTextCtrl        *m_tFrom;
+        wxStaticText      *m_stTo;
+        wxTextCtrl        *m_tTo;
 
       wxStaticBoxSizer* sbSizerPoints;
       wxButton          *bMakeFile;
@@ -214,8 +214,8 @@ public:
 };
 */
 
-double deg2rad(double deg);
-double rad2deg(double rad);
+double compass_deg2rad(double deg);
+double compass_rad2deg(double rad);
 double local_distance (double lat1, double lon1, double lat2, double lon2);
 double local_bearing (double lat1, double lon1, double lat2, double lon2);
 double VTW(double VAW, double BAW, double SOG);
