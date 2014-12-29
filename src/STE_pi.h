@@ -109,13 +109,14 @@ public:
 //    The required override PlugIn Methods
       bool RenderGLOverlay(wxGLContext *pcontext, PlugIn_ViewPort *vp);
       bool RenderOverlay(wxDC &dc, PlugIn_ViewPort *vp);
-      void Draw_Wind_Barb(wxPoint pp, double angle, double speed);
+      void Draw_Wind_Barb(wxPoint pp, double TWD, double speed);
 
 private:
       bool LoadConfig( void );
       bool SaveConfig( void );
 
       int               m_PlugIn_STE;
+      bool              newform;
 
       wxFileConfig     *m_pconfig;
       wxAuiManager     *m_pauimgr;
@@ -175,12 +176,12 @@ public:
       wxDateTime GetUTS();
       void Clear();
 
-    wxString UTS,           // "yyyymmdd hh:mm:ss Z"
+    wxString UTS,           // "yyyymmdd hh:mm:ss NF"
             Lat,            // deg.decimal
             Lon,
             SOG,
-            COGT,           // ALL Angular measurements are RADIANS
-            COGM,
+            COGT,           // ALL Angular measurements are RADIANS in OLD
+            COGM,           // Format in NEW FORMAT they're degrees (0-359)
             Variation,
             Depth,
             CrseWind,
@@ -214,13 +215,13 @@ public:
 };
 */
 
-double compass_deg2rad(double deg);
-double compass_rad2deg(double rad);
+double deg2rad(double deg);
+double rad2deg(double rad);
 double local_distance (double lat1, double lon1, double lat2, double lon2);
 double local_bearing (double lat1, double lon1, double lat2, double lon2);
-double VTW(double VAW, double BAW, double SOG);
-double BTW(double VAW, double BAW, double SOG);
-double VAW(double VTW, double BTW, double SOG);
-double BAW(double VTW, double BTW,double SOG);
+double TWS(double RWS, double RWA, double SOG);
+double TWA(double RWS, double RWA, double SOG);
+double RWS(double TWS, double TWA, double SOG);
+double RWA(double TWS, double TWA,double SOG);
 
 #endif

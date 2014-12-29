@@ -36,13 +36,11 @@
 
 //#include <math.h>
 #include <fstream>
-
+#include <wx/fileconf.h>
 #include <wx/textfile.h>
-
 //#include <wx/listctrl.h>
 #include <list>
 #include <wx/tokenzr.h>
-
 #include "STE_pi.h"
 #include "icons.h"
 
@@ -55,10 +53,9 @@ long start_record = 1, end_record = 1, record_count;
 bool start_end_change = true;
 long wstyle = wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER;
 
-int FileType = 0;
+int FileType = 0; // trt file
 double track_interval;
 int track_int_sel;
-PlugIn_ViewPort *this_vp;
 
 wxTextFile   m_istream;
 STE_Point    NMEA_out_point;
@@ -70,8 +67,8 @@ STE_PointList *m_pSTE_PointList = NULL;
 PlugIn_Track *m_pTrack = NULL;
 
 
-double sum_rws, count_rws, sum_rwd, count_rwd;  // ALL Angular measurements are RADIANS
-double sum_tws, count_tws, sum_twd, count_twd;
+double sum_rws, count_r, sum_rwd;
+double sum_tws, count_t, sum_twd;
 double var;
 wxString UTS_time, UTS_date;
 
@@ -80,6 +77,7 @@ struct wind{
     double RWA;
     double TWS;
     double RWS;
+    double TWD;
 } Wind;
 
 
@@ -139,13 +137,12 @@ int STE_pi::Init(void)
 
       //    Get a pointer to the opencpn configuration object
       m_pconfig = GetOCPNConfigObject();
+      LoadConfig();
       m_pauimgr = GetFrameAuiManager();
       m_parent_window = GetOCPNCanvasWindow();
       m_pSTE_Control = NULL;
 
-      track_interval = 0.1;
-	  track_int_sel = 0;
-      var = compass_deg2rad(-14.0);      // TODO make this an input
+      var = -14.0;      // TODO make this an input
 
       //    And load the configuration items
 //      LoadConfig();
@@ -166,7 +163,7 @@ int STE_pi::Init(void)
 
 bool STE_pi::DeInit(void)
 {
-//      SaveConfig();
+    SaveConfig();
     if ( m_pSTE_Control )
         {		
             m_pauimgr->DetachPane( m_pSTE_Control );
@@ -182,11 +179,14 @@ bool STE_pi::DeInit(void)
             m_pSTE_PointList->Clear();
         }
 
-     if (m_pTrack)
+     if (m_pTrack){
          if (!m_pTrack->pWaypointList->empty())
         {  
             m_pTrack->pWaypointList->DeleteContents(true);
         }
+
+        DeletePlugInTrack(m_pTrack->m_GUID);
+     }
 
     return true;
 }
@@ -292,28 +292,30 @@ void STE_pi::OnToolbarToolCallback(int id)
                     {
                         SetToolbarItemState( m_PlugIn_STE, false );
                         tool_bar_set = false;
-                        return;
                     }
                 }
-
-                m_istream.Open( m_ifilename );
-                record_count = m_istream.GetLineCount();
-
-                if (!m_pSTE_Control )
+                else
                 {
-                    m_pSTE_Control = new STE_Control( m_parent_window, wxID_ANY, this, 1, 100, m_istream.GetLineCount(), m_ifilename);                       
-                    wxAuiPaneInfo pane = wxAuiPaneInfo().Name(_T("STE")).Caption(_("STE Control")).CaptionVisible(true).Float().FloatingPosition(50,100).Dockable(false).Fixed().CloseButton(false).Show(true);
-                    m_pauimgr->AddPane( m_pSTE_Control, pane );
-                    m_pauimgr->Update();
-                }
+                    m_istream.Open( m_ifilename );
+                    record_count = m_istream.GetLineCount();
+
+                    if (!m_pSTE_Control )
+                    {
+                        m_pSTE_Control = new STE_Control( m_parent_window, wxID_ANY, this, 1, 100, m_istream.GetLineCount(), m_ifilename);                       
+                        wxAuiPaneInfo pane = wxAuiPaneInfo().Name(_T("STE")).Caption(_("STE Control")).CaptionVisible(true).Float().FloatingPosition(50,100).Dockable(false).Fixed().CloseButton(false).Show(true);
+                        m_pauimgr->AddPane( m_pSTE_Control, pane );
+                        m_pauimgr->Update();
+                    }
                   
-                m_pTrack = new PlugIn_Track;
-                m_pSTE_PointList = new STE_PointList;
+                    m_pTrack = new PlugIn_Track;
+                    m_pSTE_PointList = new STE_PointList;
         
-                SetStart(0);
-                SetEnd(100);
-                Load_track();
+                    SetStart(0);
+                    SetEnd(100);
+                    Load_track();
+                }
             }
+//*********** De-select Plug-in ******************************
             else
             {
                SetToolbarItemState( m_PlugIn_STE, false );
@@ -337,9 +339,9 @@ void STE_pi::OnToolbarToolCallback(int id)
                     if (!m_pTrack->pWaypointList->empty())
                     {  
                         m_pTrack->pWaypointList->Clear();
+                        DeletePlugInTrack(m_pTrack->m_GUID);
                     }
             }
-
       }
 }
 
@@ -375,9 +377,9 @@ void STE_pi::ShowPreferencesDialog(wxWindow* parent)
     pFileType->SetSelection(FileType);
 
     wxString track_int[] = {
+        _("Minimum leg size"),
         _("500 feet (.1 mile)"),
-        _("50 feet (.01 mile)"),
-        _("Automatic")
+        _("50 feet (.01 mile)")
     };
 
     pTrackInterval = new wxRadioBox(dialog, ID_POINT_INTERVAL, _("Track Minimum Interval"),
@@ -398,8 +400,21 @@ void STE_pi::ShowPreferencesDialog(wxWindow* parent)
 		FileType = pFileType->GetSelection();
 
 		track_int_sel = pTrackInterval->GetSelection();
+
+        switch(track_int_sel)
+	    {
+		    case 0:
+                track_interval = 0;
+                break;
+            case 1:
+                track_interval = 0.1;
+                break;
+            case 2:
+                track_interval = 0.01;
+                break;
+	    }
+        SaveConfig();
 	}
-//            SaveConfig();
 }
 
 /*
@@ -410,7 +425,7 @@ void STE_pi::SetColorScheme(PI_ColorScheme cs)
             m_pSTE_Control->SetColorScheme( cs );
       }
 }
-
+*/
 bool STE_pi::LoadConfig(void)
 {
       wxFileConfig *pConf = (wxFileConfig *)m_pconfig;
@@ -418,8 +433,7 @@ bool STE_pi::LoadConfig(void)
       if(pConf)
       {
             pConf->SetPath( _T("/PlugIns/STE") );
-
-//            pConf->Read( _T("InputFilename"), &m_ifilename, wxEmptyString );
+            pConf->Read( _T("TrackInterval"), &track_interval, .1 );
 
             return true;
       }
@@ -434,8 +448,7 @@ bool STE_pi::SaveConfig(void)
       if(pConf)
       {
             pConf->SetPath( _T("/PlugIns/STE") );
-
-//            pConf->Write( _T("InputFilename"), m_ifilename );
+            pConf->Write( _T("TrackInterval"), track_interval);
 
             return true;
       }
@@ -443,7 +456,7 @@ bool STE_pi::SaveConfig(void)
             return false;
 }
 
-*/
+
 //***************************************************************
 //      Local functions
 //***************************************************************
@@ -462,6 +475,13 @@ bool STE_pi::Loadtxt_trt( void )
     outfilename = outfilename + _T("rt");
     
     instream.Open( m_ifilename );
+    double file_size = (double)instream.GetLineCount();
+    if (file_size > 10000)
+    {
+        wxString m_string = m_string.Format(_(" This file has %5.0f records. Continue?"), file_size); // instream.GetLineCount()));
+        int do_file = wxMessageBox(m_string, _(""), wxYES_NO);
+        if(do_file == wxNO) return false;
+    }
 
     outstream.Open( outfilename, wxFile::write );
     if (outstream.IsOpened()) {
@@ -471,6 +491,7 @@ bool STE_pi::Loadtxt_trt( void )
         end_infile= instream.GetLineCount();
         for (long in_record = 1; in_record < end_infile; ++in_record) {
             sentence = instream.GetLine(in_record);
+
             if( make_trt_line (sentence)){            
                 wxString trt_line = build_trt_string();
                 outstream.Write(trt_line);
@@ -482,6 +503,12 @@ bool STE_pi::Loadtxt_trt( void )
         outstream.Close();
         m_ifilename = outfilename;
         trt_file_ok = true;
+
+        int answer = wxMessageBox(_("File converted. Another?"), _( ""),wxYES_NO);
+        if (answer == wxNO)
+        {
+            FileType = 0;
+        }
     }
     else{
         wxLogError(_T("Cannot save STE NMEA data in file '%s'."), outfilename);
@@ -503,14 +530,28 @@ bool STE_pi::make_trt_line(wxString sentence)   // test and fill in true wind da
                 NMEA_out_point.COGT = m_string.Format(_T("%3.1f"), Boat.COG);
         }
 
-        if (Boat.SOG > 2.0 && Boat.COG >= 0.0){        
+        if (Boat.SOG > 2.0 && Boat.COG >= 0.0 && Wind.TWS <= 0.0){        
             if (Wind.RWA >= 0.0 && Wind.RWS > 2.0)
             {
-                Wind.TWS = VTW(Wind.RWS,Wind.RWA,Boat.SOG);
-                Wind.TWA = BTW(Wind.RWS,Wind.RWA,Boat.SOG) + Boat.COG;
+                Wind.TWS = TWS(Wind.RWS,Wind.RWA,Boat.SOG);
+                Wind.TWA = TWA(Wind.RWS,Wind.RWA,Boat.SOG);
+
                 NMEA_out_point.TrueWind = m_string.Format(_T("%5.3f"), Wind.TWA);
                 NMEA_out_point.TWSpd = m_string.Format(_T("%3.1f"), Wind.TWS);
-            }            
+            }
+
+            if (Wind.TWA >= 0.0 && Wind.TWS > 2.0 && Wind.RWS <= 0.0)
+            {
+                Wind.RWS = RWS(Wind.TWS,Wind.TWA,Boat.SOG);
+                Wind.RWA = RWA(Wind.TWS,Wind.TWA,Boat.SOG);
+
+                NMEA_out_point.RelWind = m_string.Format(_T("%5.3f"), Wind.RWA);
+                NMEA_out_point.RWSpd = m_string.Format(_T("%3.1f"), Wind.RWS);
+            }
+
+            Wind.TWD = Wind.TWA + Boat.COG;
+            if (Wind.TWD > 360) Wind.TWD = Wind.TWD - 360;
+            NMEA_out_point.CrseWind =  m_string.Format(_T("%3.1f"), Wind.TWD);
         }
 
         if(!NMEA_out_point.UTS.IsEmpty()){
@@ -560,7 +601,7 @@ bool STE_pi::NMEA_parse( wxString sentence)
                         long min = long(value / 100) - (hr * 100);
                         long sec = long(value) - (hr * 10000) - (min * 100);
 
-                        UTS_time = wxString::Format(wxT("%02d:%02d:%02d Z"),hr,min,sec);
+                        UTS_time = wxString::Format(wxT("%02d:%02d:%02d NF"),hr,min,sec);
                     }
             string_parsed = true;
         }
@@ -569,7 +610,7 @@ bool STE_pi::NMEA_parse( wxString sentence)
         {
             if( !wxIsNaN( m_NMEA0183.Hdg.MagneticVariationDegrees ) )
             {
-                var = compass_deg2rad( m_NMEA0183.Hdg.MagneticVariationDegrees);
+                var =  m_NMEA0183.Hdg.MagneticVariationDegrees;
                 if( m_NMEA0183.Hdg.MagneticVariationDirection == West )
                     var = - var;
             }
@@ -577,8 +618,8 @@ bool STE_pi::NMEA_parse( wxString sentence)
 
             if( !wxIsNaN( m_NMEA0183.Hdg.MagneticSensorHeadingDegrees ) )
             {
-                Boat.HDG = compass_deg2rad(m_NMEA0183.Hdg.MagneticSensorHeadingDegrees)+ var;
-                if (Boat.HDG > 2*PI) Boat.HDG = Boat.HDG - 2*PI;
+                Boat.HDG = m_NMEA0183.Hdg.MagneticSensorHeadingDegrees + var;
+                if (Boat.HDG > 360) Boat.HDG = Boat.HDG - 360;
                 NMEA_out_point.BtHDG = m_string.Format(_T("%5.3f"), Boat.HDG);
             }
             string_parsed = true;
@@ -588,7 +629,7 @@ bool STE_pi::NMEA_parse( wxString sentence)
         {
             if( !wxIsNaN( m_NMEA0183.Hdm.DegreesMagnetic) )
             {
-                Boat.HDG = compass_deg2rad(m_NMEA0183.Hdm.DegreesMagnetic) + var;               
+                Boat.HDG = m_NMEA0183.Hdm.DegreesMagnetic + var;               
                 NMEA_out_point.BtHDG = m_string.Format(_T("%5.3f"), Boat.HDG);
             }
             string_parsed = true;
@@ -598,7 +639,7 @@ bool STE_pi::NMEA_parse( wxString sentence)
         {
             if( !wxIsNaN( m_NMEA0183.Hdt.DegreesTrue) )
             {
-                Boat.HDG = compass_deg2rad(m_NMEA0183.Hdt.DegreesTrue);
+                Boat.HDG = m_NMEA0183.Hdt.DegreesTrue;
                 NMEA_out_point.BtHDG = m_string.Format(_T("%5.3f"), Boat.HDG);
             }
         }
@@ -618,9 +659,8 @@ bool STE_pi::NMEA_parse( wxString sentence)
 
         else if( m_NMEA0183.LastSentenceIDParsed == _T("MWV") )
         {
-            double wind_speed, wind_angle_rad;
+            double wind_speed;
             wind_speed = m_NMEA0183.Mwv.WindSpeed;
-            wind_angle_rad = compass_deg2rad(m_NMEA0183.Mwv.WindAngle);
 
             if(  wind_speed < 100. )
             {               
@@ -635,23 +675,23 @@ bool STE_pi::NMEA_parse( wxString sentence)
 
                 if(m_NMEA0183.Mwv.Reference == _T("R"))
                 {
-                    sum_rwd += wind_angle_rad;
-                    count_rwd += 1;
-                    sum_rws += wind_speed;
-                    count_rws += 1;
-                    Wind.RWA = sum_rwd/count_rwd;
-                    Wind.RWS = sum_rws/count_rws;
+                    sum_rwd = sum_rwd + m_NMEA0183.Mwv.WindAngle;
+                    count_r = count_r + 1;
+                    sum_rws =  sum_rws + wind_speed;
+
+                    Wind.RWA = sum_rwd/count_r;
+                    Wind.RWS = sum_rws/count_r;
                     NMEA_out_point.RelWind = m_string.Format(_T("%5.3f"), Wind.RWA);
                     NMEA_out_point.RWSpd = m_string.Format(_T("%3.1f"), Wind.RWS);
                 }
                 else
                 {
-                    sum_twd += wind_angle_rad;
-                    count_twd += 1;
-                    sum_tws += wind_speed;
-                    count_tws += 1;
-                    Wind.TWA = sum_twd/count_twd;
-                    Wind.TWS = sum_tws/count_tws;
+                    sum_twd = sum_twd + m_NMEA0183.Mwv.WindAngle;
+                    count_t = count_t + 1;
+                    sum_tws = sum_tws + wind_speed;
+
+                    Wind.TWA = sum_twd/count_t;
+                    Wind.TWS = sum_tws/count_t;
                     NMEA_out_point.TrueWind = m_string.Format(_T("%5.3f"), Wind.TWA);
                     NMEA_out_point.TWSpd = m_string.Format(_T("%3.1f"), Wind.TWS);
                 }
@@ -694,13 +734,13 @@ bool STE_pi::NMEA_parse( wxString sentence)
 
                     if( m_NMEA0183.Rmc.TrackMadeGoodDegreesTrue < 360. )
                     {
-                        Boat.COG = compass_deg2rad(m_NMEA0183.Rmc.TrackMadeGoodDegreesTrue);
+                        Boat.COG = m_NMEA0183.Rmc.TrackMadeGoodDegreesTrue;
                         NMEA_out_point.COGT = m_string.Format(_T("%5.4f"), Boat.COG);
                     }
                    
                     if( !wxIsNaN(m_NMEA0183.Rmc.MagneticVariation) )
                     {                                            
-                        var = compass_deg2rad(m_NMEA0183.Rmc.MagneticVariation);
+                        var = m_NMEA0183.Rmc.MagneticVariation;
                         if( m_NMEA0183.Rmc.MagneticVariationDirection == West )
                             var = - var;
                     }
@@ -715,7 +755,7 @@ bool STE_pi::NMEA_parse( wxString sentence)
                         long min = long(value / 100) - (hr * 100);
                         long sec = long(value) - (hr * 10000) - (min * 100);
 
-                        UTS_time = wxString::Format(wxT("%02d:%02d:%02d Z"),hr,min,sec);
+                        UTS_time = wxString::Format(wxT("%02d:%02d:%02d NF"),hr,min,sec);
                     }
 
                     wxString date = m_NMEA0183.Rmc.Date;
@@ -732,29 +772,29 @@ bool STE_pi::NMEA_parse( wxString sentence)
                 }
                 string_parsed = true;
         }
-    }else{
+    }
+/*
+    else{
                     wxLogError(_T("NMEA Sentence not being parsed \r\n %s"), sentence);
         }
-
+*/
     return string_parsed;
 }
 
 void STE_pi::clear_variables()
 {
 	sum_rws = 0.0;
-    count_rws = 0.0;
+    count_r = 0.0;
     Wind.RWS = 0.0;
 
-	sum_rwd = 0.0;          // ALL Angular measurements are RADIANS
-    count_rwd = 0.0;
+	sum_rwd = 0.0;
     Wind.RWA = -1;
 
 	sum_tws = 0.0;
-    count_tws = 0.0;
+    count_t = 0.0;
     Wind.TWS = 0.0;
 
 	sum_twd = 0.0;
-    count_twd = 0.0;
     Wind.TWA = -1;
  
 	Boat.SOG = 0.0;
@@ -887,6 +927,7 @@ STE_Point* STE_pi::Get_Record_Data(wxString* m_instr, STE_Point* m_Point)
         m_Point->DistWP = tokenizer.GetNextToken();
         m_Point->VMG = tokenizer.GetNextToken();
         m_Point->Waypoint = tokenizer.GetNextToken();
+
         return m_Point;
         
     }
@@ -895,44 +936,34 @@ STE_Point* STE_pi::Get_Record_Data(wxString* m_instr, STE_Point* m_Point)
 
 void STE_pi::Load_track()
 {
+    if(!m_pTrack->m_GUID.IsEmpty()) {
+        m_pTrack->pWaypointList->Clear();
+        DeletePlugInTrack(m_pTrack->m_GUID);
+    }
+
     wxString m_STE_str;
     STE_Point *m_current_STE_Point, *m_start_STE_Point;
     double m_leg_dist, prev_lat = 0, prev_lon = 0;
     
-    // Track title line build
-    m_STE_str = m_istream.GetLine(1);
+    // Track point for Track Name
     m_start_STE_Point = new STE_Point;
     
     // Set up initial display position
     m_STE_str = m_istream.GetLine(start_record);
     Get_Record_Data(&m_STE_str, m_start_STE_Point); // Set GUID data for Track
 
+    if(m_start_STE_Point->UTS.Contains(_T("NF"))) // Note this is new form
+                newform = true;
+            else
+                newform = false;
+
     prev_lat = m_start_STE_Point->GetLat();
     prev_lon = m_start_STE_Point->GetLon();
-
-    switch(track_int_sel)
-	{
-		case 0:
-            track_interval = 0.1;
-            break;
-        case 1:
-            track_interval = 0.01;
-            break;
-        case 2:
-            double max_screen_distance = local_distance(this_vp->lat_min, this_vp->lon_min, this_vp->lat_max, this_vp->lon_max);
-            track_interval = max_screen_distance / 100;
-            break;
-	}
 
     if (!m_pSTE_PointList->empty())
     {
         m_pSTE_PointList->DeleteContents(true);
         m_pSTE_PointList->Clear();
-    }
-
-    if (!m_pTrack->pWaypointList->empty())
-    {  
-        m_pTrack->pWaypointList->Clear();
     }
 
     for (long STE_record = start_record; STE_record < end_record; ++STE_record)
@@ -954,13 +985,11 @@ void STE_pi::Load_track()
             m_pTrack->pWaypointList->Append(STE_to_PI_Waypoint( m_current_STE_Point));         
         }
     }
+// Create Route from file-track       
+    m_pTrack->m_NameString = _T("STE_Track " + m_start_STE_Point->UTS);
+    m_pTrack->m_GUID = _T("STE_Track "+ m_start_STE_Point->UTS);
+    AddPlugInTrack( m_pTrack, false );
 
-    if (!UpdatePlugInTrack(m_pTrack)) // Add to Route manager as non-permanent
-    {
-        m_pTrack->m_NameString = _T("STE_Track " + m_start_STE_Point->UTS);
-        m_pTrack->m_GUID = _T("STE_Track "+ m_start_STE_Point->UTS);
-        AddPlugInTrack( m_pTrack, false );
-    } 
 	start_end_change = false;
 }
 
@@ -1000,35 +1029,41 @@ bool STE_pi::RenderGLOverlay(wxGLContext *pcontext, PlugIn_ViewPort *vp)
 {
    shown_dc_message = 0;
    double wind_point_lat = 0, wind_point_lon = 0;
-   this_vp = vp;
 
    if(m_pSTE_PointList)
       {
        if(!m_pSTE_PointList->IsEmpty())
           {
-              if (start_end_change == true)
+              if (start_end_change == true){
+                  start_end_change = false;
                   Load_track();
+              }
 
               glPushAttrib(GL_COLOR_BUFFER_BIT | GL_LINE_BIT | GL_HINT_BIT);      //Save state
               glEnable(GL_BLEND);
               glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
               glPushMatrix();
+              glColor4ub(0, 0, 0, 255);	// red, green, blue,  alpha (byte values)
+              glLineWidth(1.0);
 
                 STE_PointList::iterator iter;
                 wxPoint pp;
                 for (iter = m_pSTE_PointList->begin(); iter != m_pSTE_PointList->end(); ++iter)
                     {
                         STE_Point *wind_point = *iter;
-                        double m_TrueWind , m_TWSpd;   // RADIAN values
                        
-                        wind_point->TrueWind.ToDouble(&m_TrueWind);
-                        if (m_TrueWind >= 0)
+                        wind_point->TrueWind.ToDouble(&Wind.TWA);
+                        if (Wind.TWA >= 0)
                         {
-                            wind_point->TWSpd.ToDouble(&m_TWSpd);
-                            if (m_TWSpd > 2)
+                            wind_point->COGT.ToDouble(&Boat.COG);
+                            Wind.TWD = Wind.TWA + Boat.COG;                          
+                            if(!newform) Wind.TWD = rad2deg(Wind.TWD);                      // old version had Radians
+
+                            wind_point->TWSpd.ToDouble(&Wind.TWS);
+                            if (Wind.TWS > 2)
                             {
                                 GetCanvasPixLL(vp, &pp, wind_point->GetLat(), wind_point->GetLon());
-                                Draw_Wind_Barb(pp, m_TrueWind, m_TWSpd);     
+                                Draw_Wind_Barb(pp, Wind.TWD, Wind.TWS);     
                             }
                         }
                     }
@@ -1042,8 +1077,9 @@ bool STE_pi::RenderGLOverlay(wxGLContext *pcontext, PlugIn_ViewPort *vp)
     else  return false;
 }
 
-void STE_pi::Draw_Wind_Barb(wxPoint pp, double rad, double speed)
+void STE_pi::Draw_Wind_Barb(wxPoint pp, double TWD, double speed)
 {
+    double rad_angle;
     double shaft_x, shaft_y;
     double barb_0_x, barb_0_y, barb_1_x, barb_1_y;
     double barb_2_x, barb_2_y ;
@@ -1062,27 +1098,25 @@ void STE_pi::Draw_Wind_Barb(wxPoint pp, double rad, double speed)
     if (p > 5) p = 5;
     p = 3*p;
 
-	glColor4ub(0, 0, 0, 255);	// red, green, blue,  alpha (byte values) BLACK
-    rad = rad - PI/2;           // Correct for North to 0 rad
-    glLineWidth (1.0);
-
-    shaft_x = cos(rad) * 20;
-	shaft_y = sin(rad) * 20;
+    rad_angle = deg2rad(TWD);
+    
+    shaft_x = cos(rad_angle) * 20;
+	shaft_y = -sin(rad_angle) * 20;
 
     barb_0_x = pp.x + .6 * shaft_x;
-    barb_0_y = pp.y + .6 * shaft_y;
+    barb_0_y = (pp.y + .6 * shaft_y);
     barb_1_x = pp.x + .8 * shaft_x;
-    barb_1_y = pp.y + .8 * shaft_y;
+    barb_1_y = (pp.y + .8 * shaft_y);
     barb_2_x = pp.x + shaft_x;
-    barb_2_y = pp.y + shaft_y;
+    barb_2_y = (pp.y + shaft_y);
 
     
-    barb_legnth_0_x = cos(rad + PI/4) * barb_legnth[p];
-    barb_legnth_0_y = sin(rad + PI/4) * barb_legnth[p];
-    barb_legnth_1_x = cos(rad + PI/4) * barb_legnth[p+1];
-    barb_legnth_1_y = sin(rad + PI/4) * barb_legnth[p+1];
-    barb_legnth_2_x = cos(rad + PI/4) * barb_legnth[p+2];
-    barb_legnth_2_y = sin(rad + PI/4) * barb_legnth[p+2];
+    barb_legnth_0_x = cos(rad_angle + PI/4) * barb_legnth[p];
+    barb_legnth_0_y = -sin(rad_angle + PI/4) * barb_legnth[p];
+    barb_legnth_1_x = cos(rad_angle + PI/4) * barb_legnth[p+1];
+    barb_legnth_1_y = -sin(rad_angle + PI/4) * barb_legnth[p+1];
+    barb_legnth_2_x = cos(rad_angle + PI/4) * barb_legnth[p+2];
+    barb_legnth_2_y = -sin(rad_angle + PI/4) * barb_legnth[p+2];
 
 
       glBegin(GL_LINES);
@@ -1287,14 +1321,14 @@ STE_Analysis::~STE_Analysis(void)
 //************************************************************
 // Math equations
 */
-static double compass_deg2rad(double deg)
+static double deg2rad(double deg)
 {
-    return ((90 - deg * PI / 180.0));
+    return ((90 - deg) * PI / 180.0);
 }
 
-static double compass_rad2deg(double rad)
+static double rad2deg(double rad)
 {
-    return (int(rad * 180.0 / PI + 90 + 360) % 360);
+    return (int(90 - (rad * 180.0 / PI) + 360) % 360);
 }
 
 
@@ -1320,22 +1354,40 @@ double angle = atan2( (lat2-lat1)*PI/180, ((lon2-lon1)* PI/180 * cos(lat1 *PI/18
 	return (angle);
 }
 
-double VTW(double VAW, double BAW, double SOG){
-    double VTW_value = sqrt(pow((VAW * sin(BAW)),2) + pow((VAW * cos(BAW)- SOG),2));
-    return VTW_value;
+double TWS(double RWS, double RWA, double SOG)
+{
+    RWA = deg2rad(RWA);
+    double TWS_value = sqrt(pow((RWS * sin(RWA)),2) + pow((RWS * cos(RWA)- SOG),2));
+    return TWS_value;
 }
 
-double BTW(double VAW, double BAW, double SOG){
-    double BTW_value = atan((VAW * sin(BAW))/(VAW * cos(BAW)-SOG));
-    return BTW_value;
+double TWA(double RWS, double RWA, double SOG)
+{
+    double RWA_R = deg2rad(RWA);
+    double TWA_value = atan((RWS * sin(RWA_R))/(RWS * cos(RWA_R)-SOG));
+    TWA_value = rad2deg(TWA_value);
+    if(RWA > 180.0 && TWA_value < 180)
+        TWA_value = TWA_value + 180;;
+    if (TWA_value < 0)
+        TWA_value = TWA_value + 180;
+    return TWA_value;
 }
 
-double VAW(double VTW, double BTW, double SOG){
-    double VAW_value = sqrt(pow((VTW * sin(BTW)),2) + pow((VTW * cos(BTW)+ SOG), 2));
-    return VAW_value;
+double RWS(double TWS, double TWA, double SOG)
+{
+    TWA = deg2rad(TWA);
+    double RWS_value = sqrt(pow((TWS * sin(TWA)),2) + pow((TWS * cos(TWA)+ SOG), 2));
+    return RWS_value;
 }
 
-double BAW(double VTW, double BTW,double SOG){
-    double BAW_value = atan((VTW * sin(BTW))/(VTW * cos(BTW)+ SOG));
-    return BAW_value;
+double RWA(double TWS, double TWA,double SOG)
+{
+    double TWA_R = deg2rad(TWA);
+    double RWA_value = atan((TWS * sin(TWA_R))/(TWS * cos(TWA_R)+ SOG));
+    RWA_value = rad2deg(RWA_value);
+    if( TWA > 180 && RWA_value < 180)
+        RWA_value = RWA_value + 180;
+    if (RWA_value < 0)
+        RWA_value = RWA_value + 180;
+    return RWA_value;
 }
