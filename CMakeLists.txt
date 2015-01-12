@@ -67,6 +67,8 @@ SET(SRC_STE
             src/icons.cpp
             src/STE_pi.h
             src/STE_pi.cpp
+		  src/mathplot.h
+            src/mathplot.cpp
  	)
 
 SET(SRC_NMEA0183
