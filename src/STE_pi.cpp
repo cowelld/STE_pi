@@ -42,8 +42,13 @@
 #include <wx/tokenzr.h>
 #include "STE_pi.h"
 #include "icons.h"
+#include "ocpn_plugin.h"
 
 using namespace std;
+
+#ifdef __WXMSW__
+#include "GL/glu.h"
+#endif
 
 bool  shown_dc_message;
 bool tool_bar_set = false;
@@ -75,7 +80,7 @@ PlugIn_Track *m_pTrack = NULL;
 double sum_rws, count_r, sum_rwa;
 double sum_tws, count_t, sum_twa;
 double var;
-wxString UTS_time, UTS_date;
+wxString UTS_time, UTS_date, record_date;
 
 
 struct wind{
@@ -299,13 +304,8 @@ void STE_pi::OnToolbarToolCallback(int id)
                }
 
         //************ Open file for data *******************************
-                wxString message = _("Select trt file");
-                wxString filetypext = _("*.trt");
-                if (FileType == 1) {
-                    message = _("Select txt file");
-                    filetypext = _("*.txt");
-                }
-
+                wxString message = _("Select track (trt) or log (txt) file");
+                wxString filetypext = _("*.t*");
                 wxFileDialog fdlg( m_parent_window, message , _T(""), m_ifilename, filetypext, wxFD_OPEN|wxFD_FILE_MUST_EXIST );
                 if ( fdlg.ShowModal() != wxID_OK)
                     {
@@ -319,7 +319,7 @@ void STE_pi::OnToolbarToolCallback(int id)
 
         //********************** Create trt file from NMEA message file (txt) ************************
 
-                if (FileType == 1)
+                if (m_ifilename.AfterLast('.') == _("txt"))
                 {
                     if(!Loadtxt_trt())                      // convert file and rename m_ifilename
                     {
@@ -362,7 +362,7 @@ void STE_pi::OnToolbarToolCallback(int id)
                     }
 
 //************ Data graphical display *************************************
-
+/*
                     if (!m_pGraph )
                     {
                         m_pGraph = new STE_Graph( m_parent_window, wxID_ANY, this, wxDefaultPosition, wxSize(300,200));                       
@@ -370,7 +370,7 @@ void STE_pi::OnToolbarToolCallback(int id)
                         m_pauimgr->AddPane( m_pGraph, pane2 );
                         m_pauimgr->Update();
                     }
-                }
+ */               }
             }
 //*********** De-select Plug-in ******************************
             else
@@ -434,7 +434,7 @@ void STE_pi::ShowPreferencesDialog(wxWindow* parent)
     wxStaticBox* StaticBoxSizer = new wxStaticBox(dialog, wxID_ANY, _("STE Configuration"));
     wxStaticBoxSizer* BoxSizerSTE = new wxStaticBoxSizer(StaticBoxSizer, wxVERTICAL);
     Display_Preferencs_panel->Add(BoxSizerSTE, 0, wxGROW|wxALL, border_size);
-
+/*
     wxString FileTypeStrings[] = {
         _("SeaTrace (trt) files"),
         _("VDR (txt) files"),
@@ -445,9 +445,9 @@ void STE_pi::ShowPreferencesDialog(wxWindow* parent)
                                     2, FileTypeStrings, 1, wxRA_SPECIFY_COLS);
 
     BoxSizerSTE->Add(pFileType, 0, wxALL | wxEXPAND, 2);
-    
-    pFileType->SetSelection(FileType);
 
+    pFileType->SetSelection(FileType);
+*/
     wxString track_int[] = {
         _("Minimum leg size"),
         _("500 feet (.1 mile)"),
@@ -469,7 +469,7 @@ void STE_pi::ShowPreferencesDialog(wxWindow* parent)
 //********************** Input Data selections by modal ********************
     if(dialog->ShowModal() == wxID_OK)  // Use this instead of Event driven routines.
       {
-		FileType = pFileType->GetSelection();
+//		FileType = pFileType->GetSelection();
 
 		track_int_sel = pTrackInterval->GetSelection();
 
@@ -489,15 +489,6 @@ void STE_pi::ShowPreferencesDialog(wxWindow* parent)
 	}
 }
 
-/*
-void STE_pi::SetColorScheme(PI_ColorScheme cs)
-{
-      if ( m_pSTE_Control )
-      {
-            m_pSTE_Control->SetColorScheme( cs );
-      }
-}
-*/
 bool STE_pi::LoadConfig(void)
 {
       wxFileConfig *pConf = (wxFileConfig *)m_pconfig;
@@ -540,17 +531,13 @@ cur_lon = lon;
 //***************************************************************
 bool STE_pi::Loadtxt_trt( void )
 {
-    bool trt_file_ok = false;
     wxTextFile instream;
-    wxString outfilename;
     wxFile outstream;
+    wxString outfilename, outfiledir, daily_filename, sentence, log_date = _T("");
 
     outfilename.Clear();
     outfilename = m_ifilename;
-
-    // change extension from .txt to .trt                    
-    outfilename.RemoveLast(2);
-    outfilename = outfilename + _T("rt");
+    outfiledir = outfilename.BeforeLast('/') + _T('/');
     
     instream.Open( m_ifilename );
     double file_size = (double)instream.GetLineCount();
@@ -561,39 +548,51 @@ bool STE_pi::Loadtxt_trt( void )
         if(do_file == wxNO) return false;
     }
 
-    outstream.Open( outfilename, wxFile::write );
-    if (outstream.IsOpened()) {
-        wxString sentence ;       
-        long end_infile;
+    wxString n_string = n_string.Format(_(" Make into Daily logs?"));
+    int do_dailylog = wxMessageBox(n_string, _(""), wxYES_NO);
 
-        end_infile= instream.GetLineCount();
-        for (long in_record = 1; in_record < end_infile; ++in_record) {
-            sentence = instream.GetLine(in_record);
+    if(do_dailylog == wxNO){
+    	outfilename.RemoveLast(2);
+    	outfilename = outfilename + _T("rt");
+    	outstream.Open( outfilename, wxFile::write );
+
+    	while (!instream.Eof())
+    	{
+    	    sentence = instream.GetNextLine();
+
+    	    if (outstream.IsOpened()){
+    	         if( make_trt_line (sentence)){
+    	                wxString trt_line = build_trt_string(&NMEA_out_point);
+    	                outstream.Write(trt_line);
+    	                NMEA_out_point.Clear();             // Clear Output string template
+    	                clear_variables();
+    	          }
+    	    }
+    	}
+    }
+    else {
+    	while (!instream.Eof())
+    	{
+            sentence = instream.GetNextLine();
+
+            if (record_date != log_date){
+            	log_date = record_date;
+            	outstream.Close();
+            	daily_filename = outfiledir + log_date + _T(".trt");
+            	outstream.Open( daily_filename, wxFile::write );
+            }
 
             if( make_trt_line (sentence)){            
                 wxString trt_line = build_trt_string(&NMEA_out_point);
                 outstream.Write(trt_line);
                 NMEA_out_point.Clear();             // Clear Output string template
                 clear_variables();
-
-            }            
-        }       
-        outstream.Close();
-        m_ifilename = outfilename;
-        trt_file_ok = true;
-
-        int answer = wxMessageBox(_("File converted. Another?"), _( ""),wxYES_NO);
-        if (answer == wxNO)
-        {
-            FileType = 0;
-        }
+            }
+    	}
     }
-    else{
-        wxLogError(_T("Cannot save STE NMEA data in file '%s'."), outfilename);
-        trt_file_ok = false;
-    }
+    outstream.Close();
     instream.Close();
-    return trt_file_ok; 
+    return true;
 }
 
 bool STE_pi::make_trt_line(wxString sentence)   // test and fill in true wind data
@@ -840,6 +839,7 @@ bool STE_pi::NMEA_parse( wxString sentence)
                         long yr = long(value) - (day * 10000) - (month * 100);
 
                         UTS_date = wxString::Format(wxT("20%02d%02d%02d "),yr,month,day);
+                        record_date = UTS_date;
                     }
                     NMEA_out_point.UTS = UTS_date + UTS_time ;
 
@@ -962,7 +962,7 @@ void STE_pi::SetEnd( int position )
         end_record = start_record + 1 ;
 }
 
-STE_Point* STE_pi::Get_Record_Data(wxString* m_instr, STE_Point* m_Point)
+bool STE_pi::Get_Record_Data(wxString* m_instr, STE_Point* m_Point)
 {
 
     const wxChar separator = wxT(',');
@@ -1000,7 +1000,7 @@ STE_Point* STE_pi::Get_Record_Data(wxString* m_instr, STE_Point* m_Point)
         m_Point->VMG_C = tokenizer.GetNextToken();
         m_Point->Waypoint = tokenizer.GetNextToken();
 
-        return m_Point;
+        return true;
         
     }
     return false;
@@ -1059,7 +1059,7 @@ void STE_pi::Load_track()
     }
 // Create Route from file-track       
     m_pTrack->m_NameString = _T("STE_Track " + m_start_STE_Point->UTS);
-    m_pTrack->m_GUID = _T("STE_Track "+ m_start_STE_Point->UTS);
+    m_pTrack->m_GUID = _T("STE_Track " + m_start_STE_Point->UTS);
     AddPlugInTrack( m_pTrack, false );
 
 	start_end_change = false;
@@ -1872,12 +1872,12 @@ void STE_Point::Clear(void)
 //************************************************************
 // Math equations
 
-static double deg2rad(double deg)
+double deg2rad(double deg)
 {
     return ((90 - deg) * PI / 180.0);
 }
 
-static double rad2deg(double rad)
+double rad2deg(double rad)
 {
     return (int(90 - (rad * 180.0 / PI) + 360) % 360);
 }

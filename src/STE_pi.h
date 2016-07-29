@@ -28,7 +28,16 @@
 #define _STEPI_H_
 
 #include "wx/wxprec.h"
-#include "wx/plotctrl/plotctrl.h"
+//#include "wx/plotctrl/plotctrl.h"
+//#include <wx/fileconf.h>
+//#include <wx/filepicker.h>
+//#include <wx/file.h>
+#include <wx/listctrl.h>
+#include <wx/aui/aui.h>
+#include <wx/notebook.h>
+#include "ocpn_plugin.h"
+#include "nmea0183/nmea0183.h"
+#include "mathplot.h"
 
 #ifndef  WX_PRECOMP
   #include "wx/wx.h"
@@ -48,18 +57,6 @@
       #define PI        3.1415926535897931160E0      /* pi */
 #endif
 
-//#include <wx/fileconf.h>
-//#include <wx/filepicker.h>
-//#include <wx/file.h>
-#include <wx/listctrl.h>
-#include <wx/aui/aui.h>
-#include <wx/notebook.h>
-#include "../../../include/ocpn_plugin.h"
-#include "nmea0183/nmea0183.h"
-#include "mathplot.h"
-
-#define STE_TOOL_POSITION -1          // Request default positioning of toolbar tool
-
 //    Forward definitions
 
 //class wxListCtrl;
@@ -74,6 +71,8 @@ class PlugIn_Waypoint;
 //----------------------------------------------------------------------------------------------------------
 //    The PlugIn Class Definition
 //----------------------------------------------------------------------------------------------------------
+
+#define STE_TOOL_POSITION -1          // Request default positioning of toolbar tool
 
 class STE_pi : public opencpn_plugin_111
 {
@@ -97,7 +96,6 @@ public:
       int GetToolbarToolCount( void );
       void OnToolbarToolCallback( int id );
       void ShowPreferencesDialog(wxWindow* parent);
-//      void SetColorScheme( PI_ColorScheme cs );
       void SetCursorLatLon(double lat, double lon);
 
       bool Loadtxt_trt( void );
@@ -108,7 +106,7 @@ public:
       void SetEnd( int position );
 	  void clear_variables(void);
 
-      STE_Point* Get_Record_Data(wxString* m_instr, STE_Point* m_Point);
+      bool Get_Record_Data(wxString* m_instr, STE_Point* m_Point);
       PlugIn_Waypoint* STE_to_PI_Waypoint( STE_Point *m_inpoint);
       STE_Analysis      *m_pAnalysis;
 
