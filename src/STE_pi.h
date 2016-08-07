@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: STE_pi.h, v0.2 11/15/14 
+ * $Id: STE_pi.h, v0.2 11/15/14
  *
  * Project:  OpenCPN
  * Purpose:  STE Plugin
@@ -132,9 +132,8 @@ private:
       STE_Graph       *m_pGraph;
 
       NMEA0183          m_NMEA0183;
-      wxRadioBox        *pFileType;
-      wxRadioBox        *pTrackInterval;
-      
+      wxRadioBox        *pTrackInterval;      wxStaticText      *pStatic_var;
+      wxTextCtrl        *m_pvar;
 };
 
 //----------------------------------------------------------------------------------------------------------
@@ -174,7 +173,7 @@ private:
       void OnMakeFileButtonPush( wxCommandEvent& event );
       void OnTrackPropListClick( wxListEvent& event );
       void OnValidate_windButtonPush(wxCommandEvent& event);
-     
+
       STE_pi           *m_pSTE;
 };
 
@@ -198,7 +197,7 @@ public:
       wxBoxSizer      *m_panel3_sizer;
 
       mpWindow    *m_Plot1;
-      mpInfoLegend *m_Legend1; 
+      mpInfoLegend *m_Legend1;
       mpWindow    *m_Plot2;
       mpInfoLegend *m_Legend2;
       mpWindow    *m_Plot3;
@@ -248,7 +247,7 @@ public:
             DistWP,
             VMG_C,
             Waypoint;
-      
+
 };
 
 WX_DECLARE_LIST(STE_Point, STE_PointList);
